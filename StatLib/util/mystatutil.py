@@ -167,6 +167,27 @@ class ProbabilityDistribution():
                 rtn.append(candidate)
         return rtn
 
+    def estimate_param_by_unbiased(self, data: Any):
+        unknown_params = [key for key, value in self._params.items()
+                          if key == value]
+        if len(unknown_params) == 1:
+            eq_list = [self.expected_value - data.mean()]
+        elif len(unknown_params) == 2:
+            eq_list = [self.expected_value - data.mean(), self.variance - data.var(ddof=1)]
+        if len(unknown_params) > 2:
+            raise NotImplementedError('Unknow Parameters must be less than 2.')
+        ans = sp.solve(eq_list, *unknown_params)
+        candidates = [ans] if isinstance(ans, dict) else [dict(zip(unknown_params, a))
+                                                          for a in ans]
+        rtn = []
+        for candidate in candidates:
+            for key, value in candidate.items():
+                if not self.is_valid_param(key, value):
+                    break
+            else:
+                rtn.append(candidate)
+        return rtn
+
     def reset_params(self) -> None:
         for param in self._params.keys():
             self._params[param] = param
@@ -255,7 +276,7 @@ class PoissonDistribution(DiscreteProbabilityDistribution):
         _t = sp.Symbol('t')
         return sp.exp(self.lmd * (sp.exp(_t) - 1))
 
-@param('k', 'k', param_type=int, min_value=1)
+@param('k', 'k', min_value=0, min_include=False)
 @param_p_q
 class NegativeBinomialDistribution(DiscreteProbabilityDistribution):
 
@@ -267,6 +288,13 @@ class NegativeBinomialDistribution(DiscreteProbabilityDistribution):
         super().__init__()
         self.k = k
         self.p = p
+
+    @property
+    def mgf(self) -> Any:
+        ''' 式の単純化
+        '''
+        _t = sp.Symbol('t')
+        return self.p ** self.k * (1 - self.q * sp.exp(_t)) ** (-self.k)
 
 @param_as_min_max('a', 'a', 'x_min', param_type=int)
 @param_as_min_max('b', 'b', 'x_max', param_type=int)
@@ -395,8 +423,24 @@ class WeibulDistribution(ContinuousProbabilityDistribution):
         self.a = a
         self.b = b
 
-def ChiSquaredDistribution(degree_of_freedom: Any=sp.Symbol('k')) -> GammaDistribution:
-    return GammaDistribution(degree_of_freedom / 2, 0.5)
+@param('k', 'k', min_value=1)
+class ChiSquaredDistribution(ContinuousProbabilityDistribution):
+
+    param_validity = {}
+    x_min = 0
+    _k, _x = sp.symbols('k x')
+    _PDF = _x ** (_k / 2 - 1) * sp.exp(-_x / 2) / (2 ** (_k / 2) * sp.gamma(_k / 2))
+
+    def __init__(self, k: Any=sp.Symbol('k')) -> None:
+        super().__init__()
+        self.k = k
+
+    @property
+    def cdf(self) -> Any:
+        ''' 計算高速化のため再定義
+        '''
+        _z = sp.Symbol('z')
+        return sp.lowergamma(self.k / 2, _z / 2) / sp.gamma(self.k / 2)
 
 class CounterDict(Dict[float, float]):
     def __init__(self, *args, **kwargs) -> None:
@@ -407,6 +451,14 @@ class CounterDict(Dict[float, float]):
         total = 0
         for key, value in self.items():
             total += key * value
+        return total / total_num
+
+    def var(self, ddof: int=0) -> float:
+        total_num = sum(self.values()) - ddof
+        ex = self.mean()
+        total = 0
+        for key, value in self.items():
+            total += (key - ex) ** 2 * value
         return total / total_num
 
     def __pow__(self, num: int) -> Dict[float, float]:
