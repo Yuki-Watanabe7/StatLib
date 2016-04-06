@@ -218,9 +218,25 @@ class DiscreteProbabilityDistribution(ProbabilityDistribution):
         _t, _x = sp.symbols('t x')
         return sp.summation(sp.exp(_t * _x) * self.pdf, (sp.Symbol('x'), self.x_min, self.x_max))
 
-    @arg_check(int, min_value=0)
+    @arg_check(min_value=0)
     def prob(self, x: int) -> Any:
         return self.pdf.subs(sp.Symbol('x'), x)
+
+    def estimate_param_by_likelihood(self, data: Dict[float, float]):
+        unknown_params = [key for key, value in self._params.items()
+                          if key == value]
+        l_func = sum([value * sp.log(self.prob(key)) for key, value in data.items()])
+        ans = sp.solve([sp.diff(l_func, param) for param in unknown_params], *unknown_params)
+        candidates = [ans] if isinstance(ans, dict) else [dict(zip(unknown_params, a))
+                                                          for a in ans]
+        rtn = []
+        for candidate in candidates:
+            for key, value in candidate.items():
+                if not self.is_valid_param(key, value):
+                    break
+            else:
+                rtn.append(candidate)
+        return rtn
 
 class ContinuousProbabilityDistribution(ProbabilityDistribution):
 
